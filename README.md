@@ -15,6 +15,6 @@ Tema: Interpretando cajas negras (SHAP)
 Videos:
 
 - [SHAP 1 - Introducción](https://www.youtube.com/watch?v=Knnbxa5qMZY)
-- [SHAP 2 - ]()
-- [SHAP 3 - ]()
+- [SHAP 2 - Teoría](https://www.youtube.com/watch?v=Q5sufRLZM5U)
+- [SHAP 3 - Teoría](https://www.youtube.com/watch?v=Wxzbmmygn00)
 - [SHAP 4 - Practica](https://www.youtube.com/watch?v=er5ozp72Gls)
