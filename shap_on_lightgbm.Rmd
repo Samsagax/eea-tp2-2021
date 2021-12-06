@@ -1,0 +1,213 @@
+---
+title: "SHAP sobre lightGBM"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Interpretando cajas negras (SHAP)
+
+## Dataset
+
+Se utilizará un dataset sintético de fallas de un proceso productivo publicado en UCI
+(https://archive.ics.uci.edu/ml/datasets/AI4I+2020+Predictive+Maintenance+Dataset)
+
+El mismo dataset se utilizó en una publicación de Stephan Matzka (https://ieeexplore.ieee.org/abstract/document/9253083) sobre explicación de modelos.
+
+```{r imports, message=FALSE}
+require(data.table)
+require(splitstackshape)
+require(lightgbm)
+```
+
+Cargamos el dataset AI4I2020
+
+```{r}
+dataset_orig <- fread("https://archive.ics.uci.edu/ml/machine-learning-databases/00601/ai4i2020.csv")
+head(dataset_orig)
+```
+
+Notamos que es un dataset bastante desbalanceado
+
+```{r}
+# Desbalance de clase (9661 casos negativos, 339 casos positivos)
+table(dataset_orig$"Machine failure")
+```
+
+Los nombres de las columnas son problemáticos, los renombramos para que sean 
+más fáciles de manjar.
+
+Referencia de nombres: https://archive.ics.uci.edu/ml/datasets/AI4I+2020+Predictive+Maintenance+Dataset
+```{r}
+colnames(dataset_orig)
+setnames(dataset_orig, 2:9, c("pid", "type", "air_temp", "proc_temp", "rot_speed", "torque", "tool_wear", "machine_failure"))
+colnames(dataset_orig)
+```
+
+Quitamos del dataset las variables indicadoras del tipo de falla, la usaremos
+luego para confirmar las explicaciones
+```{r}
+# Quitamos variables indicadoras de tipo de falla e UDI para entrenar
+campos_buenos <- setdiff(colnames(dataset_orig),
+                         c("machine_failure", "UDI", "TWF", "HDF", "PWF", "OSF", "RNF"))
+dataset <- dataset_orig[ , c(campos_buenos, "machine_failure"), with=FALSE]
+colnames(dataset)
+```
+
+## Entrenamiento de un modelo LightGBM
+
+Utilizaremos un algoritmo muy eficiente en datos estructurados (LightGBM) que
+funciona como caja negra en la predicción. No se optimizarán parámetros, si bien
+el modelo es mejorable, excede a esta explciación y funciona igual para la 
+ilustración del problema.
+
+Separamos en train/test al 70/30 %
+```{r}
+set.seed(1)
+train_test <- stratified(dataset, size=0.3, group = "machine_failure", bothSets=TRUE)
+
+dt_train <- train_test$SAMP2
+dt_test <- train_test$SAMP1
+```
+
+Armamos el dataset en formato LightGBM
+```{r}
+dtrain <- lgb.Dataset( data = data.matrix(dt_train[, -c("machine_failure")]),
+                       label = dt_train[, machine_failure],
+                       free_raw_data = TRUE
+)
+dtest <- lgb.Dataset( data = data.matrix(dt_test[, -c("machine_failure")]),
+                       label = dt_test[, machine_failure],
+                       free_raw_data = TRUE
+)
+```
+
+Por último entrenamos el modelo utilizando el área bajo la curva ROC como
+métrica sobre el set de test.
+```{r}
+params <- list(
+  objective = "binary", # tarea objetivo
+  force_row_wise = TRUE # Overhead warning
+)
+
+modelo <- lightgbm(data = dtrain, # Dataset de entrenamiento
+                   params = params,
+                   valids = list( valid= dtest ), # Dataset de testeo
+                   early_stopping_rounds = 2, # Frena si empieza a ver overfitting
+                   metric = c("auc") # Usamos el área bajo ROC como métrica    
+)
+```
+
+## Evaluación del modelo
+El modelo devuelve probabilidades de cada caso de pertenecer a la clase
+positiva (machine_failure == 1). Uno debe seleccionar un punto de corte.
+Elegimos 3% que nos da un Recall del 95%.
+```{r}
+# Predicciones sobre el set de test
+prediccion  <- predict( modelo, data.matrix( dt_test[, -c("machine_failure")]),  )
+
+# Valores reales
+expected_vals <- dt_test[, machine_failure] == 1
+
+# Predicción.
+# Cortamos al 3% de chance (Dataset muy desbalanceado, recall > 95%, TNR > 99.8%)
+# Esta decisión dependerá de qué se quiera hacer con este modelo en producción.
+predicted_vals <- prediccion >= 0.03
+
+# Matriz de confusión sencilla
+conf_mat <- table(predicted_vals , expected_vals)
+conf_mat
+
+# Algunas métricas simples
+# True positive Rate
+TPR <- conf_mat[2,2] / (conf_mat[2,1] + conf_mat[2,2])
+
+# True negative rate
+TNR <- conf_mat[1,1] / (conf_mat[1,1] + conf_mat[1,2])
+
+# Recall
+Recall <- conf_mat[2,2] / (conf_mat[2,2] + conf_mat[1,2])
+
+# Mostramos las métricas
+cat( paste0("True positive rate: ", TPR, "\n"))
+cat( paste0("True negative rate: ", TNR, "\n"))
+cat( paste0("Recall:             ", Recall, "\n"))
+```
+
+El modelo nos predice muy bien para la tarea que queremos realizar, pero no
+nos dice por qué una pieza se considera mala o buena. Por otro lado tampoco nos
+permite analizar distintos tipos de falla (si los hay).
+
+
+## Explicación puntual
+
+Elegimos casos para que el modelo nos lo explique. Por ejemplo los casos de falla
+```{r}
+failures <- dataset[machine_failure == 1]
+failures[, orig_idx := dataset[, .I[machine_failure == 1]]]
+failures
+```
+
+```{r}
+tree_interpretation <- lgb.interprete(modelo, # El modelo entrenado
+                                      data.matrix(dataset[, -c("machine_failure")]), # Los datos sobre los que queremos explicar
+                                      failures[, orig_idx]) # Los índices de los casos que queremos explicar
+```
+
+Es un proceso bastante costoso computacionalmente (339 casos tarda 40 segundos).
+Veamos la explicación puntual de un caso
+```{r}
+tree_interpretation[[1L]]
+```
+Surge de la interpretación que es un caso de falla con contribuciones muy altas de
+alta velocidad de rotación y alto torque (alta potencia quizas?)
+
+```{r}
+dataset_orig[failures[1L, orig_idx]]
+```
+El dataset original confirma
+
+Veamos otro caso cualquiera
+```{r}
+tree_interpretation[[314L]]
+```
+Surge de la interpretación que es un caso de falla con contribución alta y casi
+exclusiva del desgaste de la herramienta.
+
+Y la causa de falla en el dataset orignal del mismo caso
+```{r}
+dataset_orig[failures[314, orig_idx]]
+```
+
+## Visualizaciones
+
+Usaremos el paquete `SHAPforxgboost` que implementa varias funcionalidades
+para el calculo y la visualización de valores SHAP en los modelos de
+`xgboost` y `lightgbm`.
+```{r, message=FALSE}
+require(SHAPforxgboost)
+```
+
+```{r}
+shap_values <- shap.values(xgb_model = modelo, X_train = data.matrix(dataset[, -c("machine_failure")]))
+shap_values$mean_shap_score
+```
+```{r}
+shap_long <- shap.prep(shap_contrib = shap_values$shap_score, X_train = data.matrix(dataset[, -c("machine_failure")]))
+shap.plot.summary(shap_long)
+```
+
+Veamos algunos gráficos de dependencia de variables
+```{r}
+shap.plot.dependence(data_long = shap_long, x = "tool_wear")
+shap.plot.dependence(data_long = shap_long, x = "rot_speed")
+```
+
+Como forma de acercar explicaciones, es posible clusterizar los casos
+```{r}
+plot_data <- shap.prep.stack.data(shap_contrib = shap_values$shap_score, top_n = 4, n_groups = 8)
+shap.plot.force_plot(plot_data, zoom_in_group = 5, y_parent_limit = c (-2,2))
+shap.plot.force_plot_bygroup(plot_data)
+```
