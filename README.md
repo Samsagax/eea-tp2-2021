@@ -18,3 +18,5 @@ Videos:
 - [SHAP 2 - Teoría](https://www.youtube.com/watch?v=Q5sufRLZM5U)
 - [SHAP 3 - Teoría](https://www.youtube.com/watch?v=Wxzbmmygn00)
 - [SHAP 4 - Practica](https://www.youtube.com/watch?v=er5ozp72Gls)
+
+[Lista de reproducción](https://youtube.com/playlist?list=PLQ4zamRaTyyZHaz5FiXS6rQYtDfmH5rh5)
