@@ -11,3 +11,10 @@ Alumnos:
 - Julian Kligman
 
 Tema: Interpretando cajas negras (SHAP)
+
+Videos:
+
+- [SHAP 1 - Introducción](https://www.youtube.com/watch?v=Knnbxa5qMZY)
+- [SHAP 2 - ]()
+- [SHAP 3 - ]()
+- [SHAP 4 - Practica](https://www.youtube.com/watch?v=er5ozp72Gls)
